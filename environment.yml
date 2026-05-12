@@ -1,0 +1,9 @@
+name: langfuse-poc
+channels:
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+    - langfuse
+    - python-dotenv

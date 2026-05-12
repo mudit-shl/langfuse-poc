@@ -1,0 +1,87 @@
+# only runs the web + worker.
+# postgres, redis, clickHouse and s3 are expected to be running somewhere else
+# copy .env.prod.example to .env.prod and fill in values 
+# docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+# docker compose -f docker-compose.prod.yml up -d --scale langfuse-web=3 --scale langfuse-worker=2
+
+x-langfuse-env: &langfuse-env
+  
+  SALT: ${SALT}
+  NEXTAUTH_URL: ${NEXTAUTH_URL}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+  NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+  TELEMETRY_ENABLED: "false"
+
+  REDIS_HOST: ${REDIS_HOST}
+  REDIS_PORT: ${REDIS_PORT:-6379}
+  REDIS_AUTH: ${REDIS_AUTH}
+  REDIS_TLS_ENABLED: ${REDIS_TLS_ENABLED:-false}
+  DATABASE_URL: ${DATABASE_URL}
+  CLICKHOUSE_URL: ${CLICKHOUSE_URL}                      
+  CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+  CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+  CLICKHOUSE_MIGRATION_URL: ${CLICKHOUSE_MIGRATION_URL}  
+  CLICKHOUSE_CLUSTER_ENABLED: ${CLICKHOUSE_CLUSTER_ENABLED:-false}
+  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: ${S3_BUCKET}
+  LANGFUSE_S3_EVENT_UPLOAD_REGION: ${S3_REGION}
+  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: ${S3_ENDPOINT} # leave empty for AWS S3
+  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-false}
+  LANGFUSE_S3_EVENT_UPLOAD_PREFIX: "events/"
+  LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: ${S3_BUCKET}
+  LANGFUSE_S3_MEDIA_UPLOAD_REGION: ${S3_REGION}
+  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: ${S3_ENDPOINT}
+  LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+  LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+  LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-false}
+  LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: "media/"
+  LANGFUSE_S3_BATCH_EXPORT_ENABLED: "false"
+  EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-}
+  SMTP_CONNECTION_URL: ${SMTP_CONNECTION_URL:-}
+
+services:
+  langfuse-web:
+    image: langfuse/langfuse:3.130.0 # pin to a specific version, do not use :3 in prod
+    restart: always
+    environment:
+      <<: *langfuse-env
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/public/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: "4G"
+        reservations:
+          cpus: "0.5"
+          memory: "1G"
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3.130.0
+    restart: always
+    environment:
+      <<: *langfuse-env
+    # No published port. 
+    # worker only consumes from redis and writes to postgres / clickHouse / s3.
+    # port:3030 inside the container is a private `/health` endpoint for liveness checks.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3030/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: "4G"
+        reservations:
+          cpus: "0.5"
+          memory: "1G"
