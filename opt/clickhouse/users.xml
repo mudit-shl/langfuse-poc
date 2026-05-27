@@ -1,0 +1,17 @@
+<clickhouse>
+    <profiles>
+        <default>
+            <max_memory_usage>4000000000</max_memory_usage>
+            <use_uncompressed_cache>0</use_uncompressed_cache>
+        </default>
+    </profiles>
+    <quotas>
+        <default>
+            <interval>
+                <duration>3600</duration>
+                <queries>0</queries>
+                <errors>0</errors>
+            </interval>
+        </default>
+    </quotas>
+</clickhouse>

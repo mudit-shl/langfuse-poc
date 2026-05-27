@@ -1,0 +1,19 @@
+[Unit]
+Description=Redis (Docker Compose)
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/redis
+
+ExecStart=/usr/bin/docker compose --env-file /opt/langfuse/.env.prod up -d --remove-orphans
+ExecStop=/usr/bin/docker compose --env-file /opt/langfuse/.env.prod down
+
+Restart=on-failure
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target

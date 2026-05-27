@@ -1,0 +1,10 @@
+<clickhouse>
+    <logger>
+        <level>information</level>
+        <console>1</console>
+    </logger>
+    <max_connections>1000</max_connections>
+    <keep_alive_timeout>10</keep_alive_timeout>
+    <max_concurrent_queries>100</max_concurrent_queries>
+    <max_server_memory_usage_to_ram_ratio>0.8</max_server_memory_usage_to_ram_ratio>
+</clickhouse>
