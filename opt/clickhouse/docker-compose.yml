@@ -4,8 +4,8 @@ services:
     container_name: clickhouse
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8123:8123"   # HTTP interface
-      - "127.0.0.1:9000:9000"   # Native TCP interface
+      - "0.0.0.0:8123:8123"   # HTTP interface
+      - "0.0.0.0:9000:9000"   # Native TCP interface
     environment:
       CLICKHOUSE_USER: ${CLICKHOUSE_USER}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
