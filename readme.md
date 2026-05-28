@@ -2,7 +2,7 @@
 running langfuse on our own infra instead of paying for their cloud.
 
 
-## why we want to self-host this
+#### why we want to self-host this
 
 - data protection.
 - cost.
@@ -10,7 +10,7 @@ running langfuse on our own infra instead of paying for their cloud.
 - we get to put it behind our sso/auth-layer and our normal infra controls (vpc, audit logs, backups, etc).
 
 
-## how langfuse is built
+#### how langfuse is built
 
 - there are 6 moving parts. 
 - two of them are app code we run, four are data stores.
@@ -29,18 +29,18 @@ running langfuse on our own infra instead of paying for their cloud.
 - the worker picks it up later and batches writes into clickhouse. 
 - this buffering lets the system handle spikes without dropping data.
 
-## deployment plan
+### deployment plan
 
 > scale the app pods, share everything else.
 
-### what we share
+#### what we share
 
 - one postgres cluster (managed, e.g. rds).
 - one redis (managed, e.g. elasticache, with `maxmemory-policy=noeviction`).
 - one clickhouse cluster (either clickhouse cloud, or self-run on a few ec2 nodes, or a kubernetes operator deployment).
 - one s3 bucket (or two, if we want to split events and media).
 
-### what we scale
+#### what we scale
 
 - `langfuse-web` 
   - scale based on incoming HTTP traffic. 
@@ -63,7 +63,7 @@ running langfuse on our own infra instead of paying for their cloud.
 - solid lines are writes / queue ops. 
 - dotted lines are reads the web pods do to serve the UI (e.g. when you open a trace).
 
-### how one trace flows through
+#### how one trace flows through
 
 ![trace ingestion flow](attachments/trace.svg)
 
@@ -72,7 +72,7 @@ running langfuse on our own infra instead of paying for their cloud.
 - that's why we can take ingestion spikes without falling over the queue.
 - absorbs them, and the workers drain at whatever rate clickhouse can handle.
 
-### how prompt management flows through
+#### how prompt management flows through
 
 - prompt management is the other big public-api workload. 
 - unlike trace ingestion, prompts live in **postgres** (not clickhouse)
@@ -90,7 +90,7 @@ running langfuse on our own infra instead of paying for their cloud.
 A few things to call out from this:
 
 
-## what runs where
+#### what runs where
 
 | component         | service we'd use                    |
 | ----------------- | ----------------------------------- |
@@ -102,7 +102,7 @@ A few things to call out from this:
 | s3                | s3                                  |
 | load balancer     | alb                                 |
 
-## docker compose file
+#### docker compose file
 [docker-compose.prod.yml](./docker-compose.prod.yml)
 ```yaml
 
@@ -222,7 +222,6 @@ services:
         reservations:
           cpus: "0.5"
           memory: "1G"
-
 ```
 
 - no postgres, redis, clickhouse, or minio services. 
@@ -233,13 +232,106 @@ services:
 - scaling on one host can done with `--scale`, example :
 
 
-   ```bash
+```bash
    docker compose -f docker-compose.prod.yml up -d \
    --scale langfuse-web=3 \
    --scale langfuse-worker=2
-   ```
+```
 
-### environment variables we need to set
+## setup guide
+
+- we are running postgres, redis and clickhouse as a systemd managed docker compose services.
+- langfuse web + worker as a seperate docker compose stack.
+
+#### pre-requisites
+- recommended ec2 specs : 20gb root ecb volume, t3.xlarge or t3.large
+```bash
+# verify
+df -h
+lsblk
+```
+- docker
+```bash
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y ca-certificates curl gnupg lsb-release
+
+# gpg key
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+# add apt repo
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# install
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+# allow current user to run docker
+sudo usermod -aG docker $USER
+newgrp docker
+
+# verify
+docker --version
+docker run hello-world
+```
+- python env manager : miniconda
+```bash
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y wget
+
+# switch to your user, do not run the following command as root
+cd ~
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+bash Miniconda3-latest-Linux-x86_64.sh
+source ~/.bashrc
+
+# verify and create env for langfuse
+conda --version
+conda config --set auto_activate_base false
+conda create -n langfuse python=3.11 -c conda-forge -y
+
+# activate env and install packages
+conda activate langfuse
+conda install -n langfuse pip
+python -m pip install python-dotenv langfuse
+
+# remove script
+rm ~/Miniconda3-latest-Linux-x86_64.sh
+```
+- necessary directories 
+```bash
+sudo mkdir -p /opt/langfuse
+sudo mkdir -p /opt/redis /opt/postgres /opt/postgres/init /opt/clickhouse
+```
+
+
+#### clone the repo
+```bash
+cd /home/<user>/
+git clone https://github.com/mudit-shl/langfuse-poc.git
+```
+
+#### copy directories to /opt
+```bash
+sudo cp -r /home/<user>/langfuse-poc/opt/clickhouse /opt/clickhouse
+sudo cp -r /home/<user>/langfuse-poc/opt/postgres   /opt/postgres
+sudo cp -r /home/<user>/langfuse-poc/opt/redis      /opt/redis
+```
+
+#### configure env variables
+```bash
+cp /home/<user>/langfuse-poc/.env.prod.example /home/<user>/langfuse-poc/.env.prod
+vim /home/<user>/langfuse-poc/.env.prod
+
+# copy .env.prod to /opt/langfuse/.env.prod
+cp /home/<user>/langfuse-poc/.env.prod /opt/langfuse/
+```
+
+#### environment variables we need to set
 [.env.prod.example](./.env.prod.example)
 ```bash
 # secrets
@@ -310,4 +402,47 @@ LANGFUSE_INIT_PROJECT_SECRET_KEY=
 LANGFUSE_INIT_USER_EMAIL=
 LANGFUSE_INIT_USER_NAME=
 LANGFUSE_INIT_USER_PASSWORD=
+```
+
+#### copy dir to /etc
+```bash
+sudo cp /home/<user>/langfuse-poc/etc/systemd/system/postgres.service    /etc/systemd/system/
+sudo cp /home/<user>/langfuse-poc/etc/systemd/system/redis.service       /etc/systemd/system/
+sudo cp /home/<user>/langfuse-poc/etc/systemd/system/clickhouse.service  /etc/systemd/system/
+
+```
+
+#### verify health
+```bash
+# start services
+sudo systemctl daemon-reload
+sudo systemctl enable postgres redis clickhouse
+sudo systemctl start postgres redis clickhouse
+sleep 20
+
+# check status
+sudo systemctl status postgres redis clickhouse
+
+# individual service check
+docker exec clickhouse clickhouse-client --query "SELECT 1"
+docker exec redis redis-cli -a <REDIS_AUTH> ping
+docker exec postgres sh -c 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+```
+
+#### start langfuse worker+web
+```bash
+cd /home/<user>/langfuse-poc/
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+sleep 15
+
+# verify
+docker compose -f docker-compose.prod.yml --env-file .env.prod ps
+curl http://localhost:3000/api/public/health # → {"status":"ok"}
+
+# view logs
+docker compose -f docker-compose.prod.yml --env-file .env.prod logs -f
+
+# or, verify by ssh tunnel
+ssh -L 3000:localhost:3000 <user>:<private-ip>
+# now open your browser : http://localhost:3000/
 ```
