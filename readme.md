@@ -102,8 +102,107 @@ A few things to call out from this:
 | s3                | s3                                  |
 | load balancer     | alb                                 |
 
+### clickhouse: disposable by design
+
+- the source of truth for all trace data is s3. 
+- every otel log, every trace event, lands in s3 before it ever touches clickhouse.
+- this means clickhouse data is replayable.
+
+```
+s3 otel logs → replay worker → langfuse public api → redis queue → langfuse-worker → clickhouse rebuilt
+```
+
+#### why keep clickhouse at all?
+
+- langfuse v3 hard-depends on it. 
+- removing it would require forking langfuse. not worth it.
+
+#### clickhouse memory
+
+- clickhouse needs a minimum of **1 GB ram**. 
+- the migration step alone consumes ~519 MB. 
+- a hard cap of 512 MB causes `memory limit exceeded` on startup. 
+- 1 GB fixes it.
+
+`docker-compose.prod.with-clickhouse.yml` sets:
+```yaml
+deploy:
+  resources:
+    limits:   { memory: "2G" }
+    reservations: { memory: "1G" }
+```
+
+full stack memory budget on a t3.xlarge (16 GB):
+
+| service              | reservation | limit |
+| -------------------- | ----------- | ----- |
+| langfuse-web         | 1 G         | 4 G   |
+| langfuse-worker      | 1 G         | 4 G   |
+| clickhouse           | 1 G         | 2 G   |
+| os + docker overhead | —           | ~2 G  |
+| **headroom**         | —           | ~4 G  |
+
+- fits comfortably on a t3.xlarge.
+
+#### cost: self-hosted container vs clickhouse cloud (aws us-east-1)
+
+- option1: co-located on one ec2 [docker-compose.prod.with-clickhouse.yml](./docker-compose.prod.with-clickhouse.yml) 
+  - web + worker + clickhouse 
+  - marginal compute cost for clickhouse: $0.
+
+  | item                                        | on-demand/month | 1-yr reserved/month |
+  | ------------------------------------------- | --------------- | ------------------- |
+  | t3.xlarge (web + worker + clickhouse)       | $121.47         | $75.93              |
+  | ebs gp3 ~50 GB (clickhouse data + os)       | ~$4             | ~$4                 |
+  | replay worker (lambda, async batch from s3) | ~$1             | ~$1                 |
+  | **total**                                   | **~$126**       | **~$81**            |
+
+- option2: dedicated ec2 for clickhouse, separate instance for web+worker
+
+  | item                                        | on-demand/month | 1-yr reserved/month |
+  | ------------------------------------------- | --------------- | ------------------- |
+  | t3.xlarge (web + worker)                    | $121.47         | $75.93              |
+  | t3.large (clickhouse only)                  | $60.74          | $37.96              |
+  | ebs gp3 ~50 GB for clickhouse               | ~$4             | ~$4                 |
+  | replay worker                               | ~$1             | ~$1                 |
+  | **total**                                   | **~$187**       | **~$119**           |
+
+- option3: clickhouse cloud (aws us-east-1)
+  - storage is the same across tiers: ~$50.60 per TB/month.
+
+  | tier        | min spend/month | notes                                           |
+  | ----------- | --------------- | ------------------------------------------------|
+  | basic       | $66.52          | single az, shared compute. dev/poc only. no HA. |
+  | scale       | $499.38         | production HA, 2 replicas, autoscaling.         |
+  | enterprise  | ~$2,670+        | dedicated infra, custom SLA.                    |
+
+  
+
+**opinion**
+- **option2 (clickhouse on its own machine) is the right call**.
+- clickhouse running on a seperate machine. 
+- every web container and every worker container, no matter which machine they're on, just point to this one `CLICKHOUSE_URL`. 
+- one source of trace data, no split.
+- to keep the clickhouse machine small, we can delete traces older than 15–30 days from clickhouse. 
+- the raw data is still safe in s3 forever, so nothing is actually lost. 
+- if we need old traces back, we can just replay those from s3. 
+- this way clickhouse stays small and we never need to give it a bigger machine.
+
+<br>
+
+- **option3:** clickhouse cloud scale ($499/month) is ~6x more expensive. not worth it when s3 already holds everything and replay is our recovery path.
+
+<br>
+
+- **option1:** puts clickhouse on the same machine as web+worker. 
+  - that's fine for one machine, but breaks the moment you add a second machine. 
+  - say a trace lands on machine 1 (web1→ch1). 
+  - if the next request hits machine 2 (web2→ch2), it won't find that trace, as ch2 doesn't have it. 
+  - request hits web1 → finds it. 
+  - request hits web2 → not found.
+
 #### docker compose file
-[docker-compose.prod.yml](./docker-compose.prod.yml)
+[docker-compose.prod.yml](./docker-compose.prod.yml) - web + worker only.
 ```yaml
 
 # only runs the web + worker.
