@@ -1,4 +1,4 @@
-# poc : self-hosting langfuse
+# self-hosting langfuse
 running langfuse on our own infra instead of paying for their cloud.
 
 
@@ -58,19 +58,7 @@ running langfuse on our own infra instead of paying for their cloud.
 
 ### architecture
 
-![architecture diagram](attachments/app.svg)
-
-- solid lines are writes / queue ops. 
-- dotted lines are reads the web pods do to serve the UI (e.g. when you open a trace).
-
-#### how one trace flows through
-
-![trace ingestion flow](attachments/trace.svg)
-
-- the web pod's job stays **fast** because it never touches clickhouse on ingestion. 
-- it just dumps the raw event to s3 and queues a job.
-- that's why we can take ingestion spikes without falling over the queue.
-- absorbs them, and the workers drain at whatever rate clickhouse can handle.
+![architecture diagram](attachments/app.png)
 
 #### how prompt management flows through
 
@@ -85,7 +73,7 @@ running langfuse on our own infra instead of paying for their cloud.
 - the `prompts` table grows slowly compared to clickhouse traces, so a small postgres is fine.
 - when someone publishes a new version, the web pod deletes the cached entries so the next read picks up fresh data.
 
-![Prompt management flow](attachments/prompt.svg)
+![Prompt management flow](attachments/prompt.png)
 
 A few things to call out from this:
 
@@ -134,13 +122,13 @@ deploy:
 
 full stack memory budget on a t3.xlarge (16 GB):
 
-| service              | reservation | limit |
-| -------------------- | ----------- | ----- |
-| langfuse-web         | 1 G         | 4 G   |
-| langfuse-worker      | 1 G         | 4 G   |
-| clickhouse           | 1 G         | 2 G   |
-| os + docker overhead | —           | ~2 G  |
-| **headroom**         | —           | ~4 G  |
+| service              | reservation | limit  |
+| -------------------- | ----------- | ------ |
+| langfuse-web         | 1 G         |  4 G   |
+| langfuse-worker      | 1 G         |  4 G   |
+| clickhouse           | 1 G         |  2 G   |
+| os + docker overhead | —           | ~2 G   |
+| **headroom**         | —           | ~4 G   |
 
 - fits comfortably on a t3.xlarge.
 
@@ -337,6 +325,53 @@ services:
    --scale langfuse-worker=2
 ```
 
+### postgres → mysql sync
+
+- langfuse uses postgres as a hard dependency.
+- and cannot be swapped for mysql. 
+- prisma orm relies on postgres-specific types 
+  - `jsonb`, 
+  - native `uuid`, `pg_trgm` extension. 
+- swapping it for mysql would require forking langfuse. 
+- not worth it.
+
+
+> postgres in langfuse holds only config/metadata: users, projects, api keys, prompts, evaluation configs.
+
+
+#### options
+
+|   | approach | mechanism | latency | operational complexity | handles hard deletes? |
+|---|----------|-----------|--------------|----------------------|-----------------------|
+| 1 | aws data migration service, managed CDC (change data capture) | reads postgres write-ahead logs, fully managed | seconds | low, no infra to run | yes |
+| 2 | debezium (open-source) + kafka | WAL → debezium → kafka topics → JDBC connector → mysql | sub-second | high - kafka cluster, kafka connect, schema registry | yes |
+| 3 | scheduled ETL (lambda) | batch poll on `updated_at`, transform, upsert into mysql | minutes? | low (lambda with rds access) | no - we have to maintain a tombstone table |
+
+#### cost comparison (aws us-east-1, per month)
+
+| line item | aws DMS | debezium + MSK | debezium + self-managed kafka on ec2 | lambda ETL |
+|-----------|-----------|-------------------|-----------------------------------------|--------------|
+| replication compute | dms.t3.medium: ~$73 | MSK m5.large × 2 brokers: ~$278 | ec2 t3.medium × 2: ~$60 | - |
+| replication instance storage (DMS) | ~$10 | - | - | - |
+| kafka connect + schema registry | - | t3.small self-hosted: ~$30 | t3.small self-hosted: ~$15 | - |
+| lambda invocations (every 5 min) | - | - | - | ~$1–2 |
+| data transfer (intra-VPC) | ~$0 | ~$0 | ~$0 | ~$0 |
+| **total / month** | **~$83-100** | **~$310-350** | **~$75–100** | **~$1–5** |
+
+#### opinion
+> do we really need to sync them? postgreSQL is already managed. why can't we redirect our existing code towards this database?
+
+default pick: Lambda ETL
+
+| pros | cons |
+|------|------|
+| ~$1/month (nearly free) | hard deletes are invisible - no tombstone, no detection |
+| no infra to maintain | sync latency: up to 5 min |
+| simple | schema changes in langfuse require updating lambda queries |
+
+upgrade to DMS if: hard delete sync becomes a requirement, or sub-minute latency is needed.
+
+
 ## setup guide
 
 - we are running postgres, redis and clickhouse as a systemd managed docker compose services.
@@ -421,6 +456,14 @@ sudo cp -r /home/<user>/langfuse-poc/opt/postgres   /opt/postgres
 sudo cp -r /home/<user>/langfuse-poc/opt/redis      /opt/redis
 ```
 
+#### copy directories to /etc
+```bash
+sudo cp /home/<user>/langfuse-poc/etc/systemd/system/postgres.service    /etc/systemd/system/
+sudo cp /home/<user>/langfuse-poc/etc/systemd/system/redis.service       /etc/systemd/system/
+sudo cp /home/<user>/langfuse-poc/etc/systemd/system/clickhouse.service  /etc/systemd/system/
+
+```
+
 #### configure env variables
 ```bash
 cp /home/<user>/langfuse-poc/.env.prod.example /home/<user>/langfuse-poc/.env.prod
@@ -503,14 +546,6 @@ LANGFUSE_INIT_USER_NAME=
 LANGFUSE_INIT_USER_PASSWORD=
 ```
 
-#### copy dir to /etc
-```bash
-sudo cp /home/<user>/langfuse-poc/etc/systemd/system/postgres.service    /etc/systemd/system/
-sudo cp /home/<user>/langfuse-poc/etc/systemd/system/redis.service       /etc/systemd/system/
-sudo cp /home/<user>/langfuse-poc/etc/systemd/system/clickhouse.service  /etc/systemd/system/
-
-```
-
 #### verify health
 ```bash
 # start services
@@ -540,8 +575,9 @@ curl http://localhost:3000/api/public/health # → {"status":"ok"}
 
 # view logs
 docker compose -f docker-compose.prod.yml --env-file .env.prod logs -f
+```
 
+```bash
 # or, verify by ssh tunnel
 ssh -L 3000:localhost:3000 <user>:<private-ip>
-# now open your browser : http://localhost:3000/
 ```
