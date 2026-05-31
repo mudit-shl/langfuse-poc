@@ -1,51 +1,36 @@
 .env
 .env.prod
 donotreadme.backup.md
+donotreadme.backup2.md
 .DS_Store
-
+docker-compose.prompts.with-clickhouse.yml
+docker-compose.prompts.without-clickhouse.yml
+docker-compose.tracing.yml
+TODO.md
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
-# dependencies
 /node_modules
 /.pnp
 .pnp.js
 migrate
 /.pnpm-store
-
-# testing
 /coverage
 **/coverage/
 /certs/
-
-# database
 /prisma/db.sqlite
 /prisma/db.sqlite-journal
-
-# next.js
 /.next/
 /.next-check/
 /out/
 next-env.d.ts
-
-# production
 /build
-
-# idea
 .idea
-
-# misc
 .DS_Store
 *.pem
-
-# debug
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 .eslintcache
-
-# local env files
-# do not commit any .env files to git, except for the .env.example file. https://create.t3.gg/en/usage/env-variables#using-environment-variables
 .env*
 !.env.dev.example
 !.env.dev-azure.example
@@ -53,22 +38,11 @@ yarn-error.log*
 !.env.prod.example
 !.env.test.example
 !.env.dev-oci.example
-
-# vercel
 .vercel
-
-# typescript
 *.tsbuildinfo
-
 /generated
-
-# openapi spec that is copied during build
 /public/openapi*.yml
-
-# claude meta files
 .claude/tsc-cache
-
-# vscode
 node_modules
 **/node_modules
 **/dist
@@ -77,7 +51,6 @@ node_modules
 **/.turbo/*
 .yarn
 .turbo
-
 web/test-results/*
 .playwright-mcp/*
 .codex-artifacts/
@@ -89,13 +62,7 @@ web/test-results/*
 .vscode/mcp.json
 .codex/config.toml
 .codex/environments/environment.toml
-
-# local config files
 *.local.*
-
-# claude meta files
 .claude/tsc-cache
-
-# Refactoring planning files (local only)
 **/.refactor/
 **/.pi-lens/
