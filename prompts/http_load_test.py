@@ -4,6 +4,7 @@ import base64
 import os
 import random
 import time
+from collections import Counter
 
 import httpx
 from dotenv import load_dotenv
@@ -53,11 +54,20 @@ async def main(total: int, concurrency: int):
 
     elapsed = time.perf_counter() - t
 
-    errors   = sum(1 for r in results if isinstance(r, Exception) or r >= 400)
-    ok       = total - errors
+    status_counts = Counter()
+    for r in results:
+        if isinstance(r, Exception):
+            status_counts["exception"] += 1
+        else:
+            status_counts[r] += 1
+
+    errors = sum(v for k, v in status_counts.items() if k == "exception" or k >= 400)
+    ok     = total - errors
 
     print(f"done — {total} requests in {elapsed:.1f}s ({total/elapsed:.0f} req/s)")
     print(f"  ok={ok}  errors={errors}")
+    for code, count in sorted(status_counts.items(), key=lambda x: str(x[0])):
+        print(f"  {code}: {count}")
 
 
 if __name__ == "__main__":
