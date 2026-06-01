@@ -46,7 +46,7 @@ async def main(total: int, concurrency: int):
     print(f"firing {total} requests (concurrency={concurrency}) ...")
     t = time.perf_counter()
 
-    async with httpx.AsyncClient(limits=limits, timeout=10.0) as client:
+    async with httpx.AsyncClient(limits=limits, timeout=30.0) as client:
         results = await asyncio.gather(
             *[send_one(client, host, auth) for _ in range(total)],
             return_exceptions=True,
@@ -55,9 +55,12 @@ async def main(total: int, concurrency: int):
     elapsed = time.perf_counter() - t
 
     status_counts = Counter()
+    sample_exceptions = []
     for r in results:
         if isinstance(r, Exception):
             status_counts["exception"] += 1
+            if len(sample_exceptions) < 3:
+                sample_exceptions.append(r)
         else:
             status_counts[r] += 1
 
@@ -68,6 +71,8 @@ async def main(total: int, concurrency: int):
     print(f"  ok={ok}  errors={errors}")
     for code, count in sorted(status_counts.items(), key=lambda x: str(x[0])):
         print(f"  {code}: {count}")
+    for exc in sample_exceptions:
+        print(f"  sample exception: {type(exc).__name__}: {exc}")
 
 
 if __name__ == "__main__":
