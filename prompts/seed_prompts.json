@@ -114,7 +114,7 @@
   {
     "name": "interview-question-generator",
     "type": "chat",
-    "labels": ["staging"],
+    "labels": ["production"],
     "config": { "model": "gpt-4o", "temperature": 0.6, "max_tokens": 1500 },
     "prompt": [
       {
