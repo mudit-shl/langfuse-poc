@@ -325,6 +325,62 @@ services:
    --scale langfuse-worker=2
 ```
 
+### performance: one `langfuse-web` container
+
+- benchmarked the prompt read path against a single `langfuse-web` container using [prompts/http_load_test.py](./prompts/http_load_test.py):
+
+```bash
+python http_load_test.py --total 20000 --concurrency 16
+```
+
+- 20000 requests in total
+- one langfuse-web container
+
+| concurrency | time (s) | throughput (req/s) | avg (ms) | p50 (ms) | p90 (ms) | p95 (ms) | p99 (ms) | max (ms) |
+|------------:|---------:|-------------------:|---------:|---------:|---------:|---------:|---------:|---------:|
+| 1           |   135.99 |             147.07 |      6.8 |      6.4 |      7.3 |      8.0 |     16.9 |    157.0 |
+| 2           |   115.26 |             173.52 |     11.5 |     10.7 |     12.5 |     14.9 |     24.8 |    207.8 |
+| 4           |   102.90 |             194.36 |     20.6 |     19.2 |     24.9 |     28.7 |     36.5 |    377.6 |
+| 8           |    91.94 |             217.54 |     36.7 |     34.8 |     44.1 |     48.0 |     58.3 |    473.5 |
+| **16**      |**80.59** |         **248.18** | **64.4** | **59.9** | **95.7** |**110.6** |**173.1** |**501.5** |
+| 32          |   118.66 |             168.55 |    189.6 |    121.6 |    427.6 |    563.0 |    883.1 |   2051.6 |
+| 64          |   205.68 |              97.24 |    657.5 |    467.3 |   1463.1 |   1866.0 |   2828.4 |   5444.4 |
+
+- throughput peaks at **~248 req/s at concurrency 16**, then falls off a cliff.
+- at concurrency 32, p99 jumps to 883 ms. at 64, p99 climbs past 2.8 s and throughput drops by 60%.
+- so for one web container, **~16 in-flight requests is the sweet spot**.
+
+#### where the bottleneck wasn't
+
+- **postgres**: checked active backends and wait events:
+  - no lock waits, 
+  - no client-read backlog. 
+  - postgres was idle. 
+  - the prompt read path is cached in redis, so postgres barely sees traffic.
+  ```bash
+  docker exec postgres psql -U $POSTGRES_USER -d $POSTGRES_DB \
+  -c "select wait_event_type, wait_event, count(*) from pg_stat_activity group by 1,2;"
+  ```
+
+- **redis**: checked ops/sec under load:
+  ```bash
+  redis-cli INFO stats | grep "instantaneous_ops_per_sec"
+  ```
+  - hovered around ~500 ops/sec. 
+  - nowhere near redis's ceiling.
+
+#### where the bottleneck was
+
+the web container only runs **a single node thread**:
+
+```bash
+docker exec -it langfuse-poc-langfuse-web-1 sh -c "cat /proc/1/status | grep Threads"
+# Threads: 1
+```
+
+- one event loop, one cpu core. concurrency > 16 just piles up behind a saturated cpu.
+- this explains why p99 explodes past concurrency 16 even though postgres and redis are bored.
+
 ### postgres → mysql sync
 
 - langfuse uses postgres as a hard dependency.
