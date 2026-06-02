@@ -189,140 +189,27 @@ full stack memory budget on a t3.xlarge (16 GB):
   - request hits web1 → finds it. 
   - request hits web2 → not found.
 
-#### docker compose file
+### docker compose file
+#### without nginx
+- for one web, and one worker
 [docker-compose.prod.yml](./docker-compose.prod.yml) - web + worker only.
-```yaml
-
-# only runs the web + worker.
-# postgres, redis, clickhouse, and s3 are expected to be running externally.
-# docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
-# docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --scale langfuse-web=3 --scale langfuse-worker=2
-
-x-langfuse-env: &langfuse-env
-
-  SALT: ${SALT}
-  NEXTAUTH_URL: ${NEXTAUTH_URL}
-  ENCRYPTION_KEY: ${ENCRYPTION_KEY}
-  NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
-  TELEMETRY_ENABLED: ${TELEMETRY_ENABLED:-}
-  LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: ${LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES:-}
-  LANGFUSE_USE_AZURE_BLOB: ${LANGFUSE_USE_AZURE_BLOB:-}
-  LANGFUSE_USE_OCI_NATIVE_OBJECT_STORAGE: ${LANGFUSE_USE_OCI_NATIVE_OBJECT_STORAGE:-}
-  LANGFUSE_OCI_AUTH_TYPE: ${LANGFUSE_OCI_AUTH_TYPE:-}
-  DATABASE_URL: ${DATABASE_URL}
-  CLICKHOUSE_URL: ${CLICKHOUSE_URL}
-  CLICKHOUSE_USER: ${CLICKHOUSE_USER}
-  CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
-  CLICKHOUSE_MIGRATION_URL: ${CLICKHOUSE_MIGRATION_URL}
-  CLICKHOUSE_CLUSTER_ENABLED: ${CLICKHOUSE_CLUSTER_ENABLED:-}
-  REDIS_HOST: ${REDIS_HOST}
-  REDIS_PORT: ${REDIS_PORT:-}
-  REDIS_AUTH: ${REDIS_AUTH}
-  REDIS_TLS_ENABLED: ${REDIS_TLS_ENABLED:-}
-  REDIS_TLS_CA: ${REDIS_TLS_CA:-}
-  REDIS_TLS_CERT: ${REDIS_TLS_CERT:-}
-  REDIS_TLS_KEY: ${REDIS_TLS_KEY:-}
-  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: ${LANGFUSE_S3_EVENT_UPLOAD_BUCKET}
-  LANGFUSE_S3_EVENT_UPLOAD_REGION: ${LANGFUSE_S3_EVENT_UPLOAD_REGION}
-  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID}
-  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY}
-  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: ${LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT:-}
-  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: ${LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE:-}
-  LANGFUSE_S3_EVENT_UPLOAD_PREFIX: ${LANGFUSE_S3_EVENT_UPLOAD_PREFIX:-}
-  LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: ${LANGFUSE_S3_MEDIA_UPLOAD_BUCKET}
-  LANGFUSE_S3_MEDIA_UPLOAD_REGION: ${LANGFUSE_S3_MEDIA_UPLOAD_REGION}
-  LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID}
-  LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY}
-  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: ${LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT:-}
-  LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: ${LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE:-}
-  LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: ${LANGFUSE_S3_MEDIA_UPLOAD_PREFIX:-}
-  LANGFUSE_S3_BATCH_EXPORT_ENABLED: ${LANGFUSE_S3_BATCH_EXPORT_ENABLED:-}
-  LANGFUSE_S3_BATCH_EXPORT_BUCKET: ${LANGFUSE_S3_BATCH_EXPORT_BUCKET}
-  LANGFUSE_S3_BATCH_EXPORT_REGION: ${LANGFUSE_S3_BATCH_EXPORT_REGION}
-  LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID: ${LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID}
-  LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY: ${LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY}
-  LANGFUSE_S3_BATCH_EXPORT_ENDPOINT: ${LANGFUSE_S3_BATCH_EXPORT_ENDPOINT:-}
-  LANGFUSE_S3_BATCH_EXPORT_EXTERNAL_ENDPOINT: ${LANGFUSE_S3_BATCH_EXPORT_EXTERNAL_ENDPOINT:-}
-  LANGFUSE_S3_BATCH_EXPORT_FORCE_PATH_STYLE: ${LANGFUSE_S3_BATCH_EXPORT_FORCE_PATH_STYLE:-}
-  LANGFUSE_S3_BATCH_EXPORT_PREFIX: ${LANGFUSE_S3_BATCH_EXPORT_PREFIX:-}
-  LANGFUSE_INGESTION_QUEUE_DELAY_MS: ${LANGFUSE_INGESTION_QUEUE_DELAY_MS:-}
-  LANGFUSE_INGESTION_CLICKHOUSE_WRITE_INTERVAL_MS: ${LANGFUSE_INGESTION_CLICKHOUSE_WRITE_INTERVAL_MS:-}
-  EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-}
-  SMTP_CONNECTION_URL: ${SMTP_CONNECTION_URL:-}
-
-services:
-  langfuse-web:
-    image: langfuse/langfuse:3.130.0 # pin to a specific version, do not use :3 in prod
-    restart: always
-    extra_hosts:
-      - "host.docker.internal:host-gateway" 
-    environment:
-      <<: *langfuse-env
-      # bootstrap: seeds initial org/project/user on first run; ignored if entities already exist
-      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-}
-      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-}
-      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-}
-      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME:-}
-      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-}
-      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:-}
-      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-}
-      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-}
-      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-}
-    ports:
-      - "3000:3000"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/public/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    deploy:
-      resources:
-        limits:
-          cpus: "2"
-          memory: "4G"
-        reservations:
-          cpus: "0.5"
-          memory: "1G"
-
-  langfuse-worker:
-    image: langfuse/langfuse-worker:3.130.0
-    restart: always
-    extra_hosts:
-      - "host.docker.internal:host-gateway" 
-    environment:
-      <<: *langfuse-env
-    # No published port. 
-    # worker only consumes from redis and writes to postgres / clickHouse / s3.
-    # port:3030 inside the container is a private `/health` endpoint for liveness checks.
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3030/api/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    deploy:
-      resources:
-        limits:
-          cpus: "2"
-          memory: "4G"
-        reservations:
-          cpus: "0.5"
-          memory: "1G"
-```
-
 - no postgres, redis, clickhouse, or minio services. 
 - just the two app services. everything else is external.
 - both services share the same env block via a YAML anchor (`x-langfuse-env`). this guarantees the secrets are identical on web and worker.
 - the worker has no published port. 
 - it only takes work from redis. the `3030` port inside the container is just for the health check.
-- scaling on one host can done with `--scale`, example :
 
+
+#### with nginx
+- [docker-compose.prod.nginx.yml](./docker-compose.prod.nginx.yml)
+- [nginx.conf](./nginx/nginx.conf)
+- to easily scale multiple langfuse containers in one host.
+- scaling on one host can done with `--scale`
 
 ```bash
    docker compose -f docker-compose.prod.yml up -d \
    --scale langfuse-web=3 \
-   --scale langfuse-worker=2
+   --scale langfuse-worker=1
 ```
 
 ### performance: one `langfuse-web` container
