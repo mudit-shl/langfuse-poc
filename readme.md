@@ -181,15 +181,15 @@ measured with real interview traces: 8 otel json files = 1 interview.
 | 3 GB | ~77,000 |
 | 26 GB (dedicated 30 GB EBS after OS) | ~672,000 |
 
-**scenario B — with llm generation spans (full prompt + response in attributes): ~800 KiB/interview**
+**scenario B — with llm generation spans (full prompt + response in attributes): ~350 KiB/interview**
 
 | available for traces | max interviews |
 |---|---|
-| 1 GB | ~1,280 |
-| 3 GB | ~3,840 |
-| 26 GB (dedicated 30 GB EBS after OS) | ~33,000 |
+| 1 GB | ~3,000 |
+| 3 GB | ~8,900 |
+| 26 GB (dedicated 30 GB EBS after OS) | ~78,000 |
 
-> the 800 KiB/interview estimate assumes llm input/output is stored as span attributes (e.g. `gen_ai.input`, `gen_ai.output`). measure with a real llm trace before finalising ebs sizing — this is the number that determines your actual wipe frequency.
+> the 350 KiB/interview estimate is based on a real interview trace (21 traces, 129 observations, after clickhouse merge). actual size varies with llm input/output length — this is the number that determines your actual wipe frequency.
 
 #### bottleneck analysis (dedicated clickhouse-only ec2)
 
@@ -206,13 +206,13 @@ for a dedicated ec2 running only the clickhouse container:
 - 1 GB goes to idle rss, 5.4 GB available for query execution.
 - headroom matters when querying across large date ranges or running concurrent analytics.
 
-**estimated capacity with llm content in spans (~800 KiB/interview, scenario B):**
+**estimated capacity with llm content in spans (~350 KiB/interview, scenario B):**
 
 | daily interviews | 30 GB EBS | 50 GB EBS |
 |---|---|---|
-| 100/day | ~11 months | ~19 months |
-| 500/day | ~9 weeks | ~15 weeks |
-| 1,000/day | ~4.5 weeks | ~7.5 weeks |
+| 100/day | ~2 years | ~3.8 years |
+| 500/day | ~22 weeks | ~39 weeks |
+| 1,000/day | ~11 weeks | ~20 weeks |
 
 #### wipe procedure
 
