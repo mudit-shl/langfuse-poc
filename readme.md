@@ -100,6 +100,8 @@ A few things to call out from this:
 s3 otel logs → replay worker → langfuse public api → redis queue → langfuse-worker → clickhouse rebuilt
 ```
 
+**timestamp behaviour on redrive**: original trace timestamps (`start_time`, `end_time`) come from the otel span payload and are preserved exactly - even after 6 months. clickhouse orders traces by `start_time`, so sort order is correct. the only field that changes is `created_at` (when langfuse ingested the event), which will reflect the replay time. 
+
 #### why keep clickhouse at all?
 
 - langfuse v3 hard-depends on it. 
@@ -131,6 +133,91 @@ full stack memory budget on a t3.xlarge (16 GB):
 | **headroom**         | —           | ~4 G   |
 
 - fits comfortably on a t3.xlarge.
+
+#### clickhouse system tables
+
+- by default, clickhouse runs internal logging tables that grow indefinitely with no ttl.
+- on a fresh deployment with zero langfuse traces, these accumulated around **~600 MB** data in 2 months:
+
+| table | size observed | what it is |
+|---|---|---|
+| `system.trace_log` | 286 MB | cpu profiler samples |
+| `system.metric_log` | 202 MB | periodic metric snapshots every few seconds |
+| `system.asynchronous_metric_log` | 81 MB | background metric polling (185M rows) |
+| `system.query_log` | 23 MB | every query clickhouse ran |
+| `system.processors_profile_log` | 21 MB | per-query pipeline profiling |
+
+- we can truncate data periodically and restart.
+- or disable them in `opt/clickhouse/config.xml` inside the `<clickhouse>` block.
+
+```xml
+<trace_log remove="1"/>
+<metric_log remove="1"/>
+<asynchronous_metric_log remove="1"/>
+<query_log remove="1"/>
+<processors_profile_log remove="1"/>
+```
+
+#### capacity measurements (from poc)
+
+measured with real interview traces: 8 otel json files = 1 interview.
+
+| metric | value |
+|---|---|
+| traces per interview | 25 |
+| observation rows (spans) per interview | 163 |
+| clickhouse disk per interview | ~40 KiB |
+| clickhouse disk per span | ~238 bytes (compressed by clickhouse automatically — see note below) |
+| clickhouse `MemoryTracking` at rest | ~129 MB (heap memory the clickhouse allocator explicitly owns: caches, merge threads, query contexts) |
+| clickhouse container RSS | ~1 GB (total physical ram the OS maps to the process: MemoryTracking + shared libs + mmap'd column files + jit pages. the ~870 MB gap between the two is normal.) |
+
+> **clickhouse compresses automatically.** MergeTree stores data in columnar format (all values of the same column grouped across rows), then applies LZ4 compression. similar values in a column compress extremely well. `bytes_on_disk` in `system.parts` is always the post-compression size — you never interact with compression manually. it decompresses transparently on read.
+
+**scenario A — current traces (fastapi http spans only, no llm content): ~40 KiB/interview**
+
+| available for traces | max interviews |
+|---|---|
+| 1 GB | ~26,000 |
+| 3 GB | ~77,000 |
+| 26 GB (dedicated 30 GB EBS after OS) | ~672,000 |
+
+**scenario B — with llm generation spans (full prompt + response in attributes): ~800 KiB/interview**
+
+| available for traces | max interviews |
+|---|---|
+| 1 GB | ~1,280 |
+| 3 GB | ~3,840 |
+| 26 GB (dedicated 30 GB EBS after OS) | ~33,000 |
+
+> the 800 KiB/interview estimate assumes llm input/output is stored as span attributes (e.g. `gen_ai.input`, `gen_ai.output`). measure with a real llm trace before finalising ebs sizing — this is the number that determines your actual wipe frequency.
+
+#### bottleneck analysis (dedicated clickhouse-only ec2)
+
+for a dedicated ec2 running only the clickhouse container:
+
+| resource | bottleneck? | notes |
+|---|---|---|
+| disk (ebs) | yes | deterministic, easy to monitor. wipe at 80%. |
+| cpu, ram | no | won't be a bottleneck if we limit the ingestion rates. |
+| parts count | no | clickhouse's "too many parts" only triggers with thousands of tiny inserts/second. |
+
+**recommended dedicated instance**: t3.large (8 GB RAM) + 30–50 GB gp3 EBS.
+- clickhouse gets 6.4 GB ram headroom (80% of 8 GB).
+- 1 GB goes to idle rss, 5.4 GB available for query execution.
+- headroom matters when querying across large date ranges or running concurrent analytics.
+
+**estimated capacity with llm content in spans (~800 KiB/interview, scenario B):**
+
+| daily interviews | 30 GB EBS | 50 GB EBS |
+|---|---|---|
+| 100/day | ~11 months | ~19 months |
+| 500/day | ~9 weeks | ~15 weeks |
+| 1,000/day | ~4.5 weeks | ~7.5 weeks |
+
+#### wipe procedure
+
+- when disk hits 80% (or every X months), truncate all data tables. 
+- replay from s3 on demand. also limit the rate at which the traces gets replayed.
 
 #### cost: self-hosted container vs clickhouse cloud (aws us-east-1)
 
