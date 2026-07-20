@@ -355,6 +355,64 @@ docker exec -it langfuse-poc-langfuse-web-1 sh -c "cat /proc/1/status | grep Thr
 - one event loop, one cpu core. concurrency > 16 just piles up behind a saturated cpu.
 - this explains why p99 explodes past concurrency 16 even though postgres and redis are bored.
 
+### target load & production sizing
+
+- goal: **10,000 interviews/day**, **3,000 concurrent** at any time.
+- one interview = 25 traces + 170 observations = 150 ingestion events.
+
+```
+3,000 concurrent / 10 min = 5 interviews/sec sustained
+traces:       5 × 25  = 125 traces/sec
+observations: 5 × 170 = 850 observations/sec
+daily: 10,000 interviews → 250,000 traces/day, 1.7M observations/day
+```
+
+- every sizing decision below is measured against this **5 interviews/sec** sustained figure.
+
+#### ingestion benchmark: one `langfuse-web` container
+
+- benchmarked `/api/public/ingestion` against a single `langfuse-web` container using [traces/http_ingestion_load_test.py](./traces/http_ingestion_load_test.py) with a real interview trace (21 traces + 129 observations = 150 events):
+
+| concurrency | event throughput (events/s) | avg latency |
+|---:|---:|---:|
+| 1  | 172.6 | 281.6ms |
+| 2  | 200.7 | 488.1ms |
+| 4  | 200.2 | 986.7ms |
+| 8  | 210.1 | 1885.3ms |
+| 16 | 206.2 | 3844.3ms |
+| 32 | 204.9 | 7640.3ms |
+
+- throughput is flat at **~200–210 events/sec regardless of concurrency**, while latency climbs linearly.
+- signature of one saturated resource, not a concurrency limit.
+- matches the prompt-read finding above: each `langfuse-web` container runs a single node thread on a single core. extra connections just queue behind that one thread.
+- batch-size sweep (bs 1/5/10/25/50 at concurrency 2) confirmed 50 events/request is close to the per-container ceiling, not an artifact of small batches.
+
+#### how many web containers do we need
+
+- per-container ceiling: ~210 events/sec ÷ 150 events/interview ≈ **1.4 interviews/sec**.
+- containers needed: 5 interviews/sec ÷ 1.4 ≈ **3.6 → 4 minimum with zero headroom**.
+- each container is single-threaded, so a 4 vCPU box (`c6i.xlarge`) tops out at ~4 containers ≈ 3.7 interviews/sec — under target before accounting for burst variance or uneven arrival.
+- sizing for **5–6 containers** needs 8 vCPU → `c6i.2xlarge` for the web tier.
+- leaves 2–3 spare vCPUs for docker/os overhead and headroom above the 5/sec target.
+
+#### bare-minimum production cost (aws us-east-1)
+
+| item | spec | on-demand/month | 1-yr reserved/month |
+| ---- | ---- | ---------------- | -------------------- |
+| ec2 `c6i.2xlarge` (web tier, 5–6 containers) | 8 vCPU / 16 GB | $248.20 | $156.22 |
+| ec2 `c6i.xlarge` (worker, 2–3 containers)    | 4 vCPU / 8 GB  | $124.10 | $78.11  |
+| ebs gp3 (web + worker roots)                 | 2× 10 GB       | $1.60   | $1.60   |
+| ec2 `m6i.xlarge` (clickhouse)                | 4 vCPU / 16 GB | $140.16 | $88.33  |
+| ebs gp3 for clickhouse                       | 150 GB         | $12.00  | $12.00  |
+| ec2 `t3.large` (s3 replay worker)            | 2 vCPU / 8 GB  | $60.74  | $37.96  |
+| ebs gp3 (replay worker root)                 | 8 GB           | $0.64   | $0.64   |
+| rds `db.t4g.medium` single-az                | 2 vCPU / 4 GB  | $47.45  | $31.39  |
+| rds gp3 storage (single-az)                  | 20 GB @ $0.115/GB | $2.30 | $2.30  |
+| elasticache `cache.t4g.medium`               | 2 vCPU / 3.09 GB  | $46.72 | $29.93 |
+| alb                                          | base + ~1–2 lcu   | ~$22–28 | ~$22–28 |
+| lambda (postgres → mysql sync)               | infrequent async  | ~$1–5   | ~$1–5   |
+| **total**                                    |                   | **~$707–717** | **~$461–471** |
+
 ### postgres → mysql sync
 
 - langfuse uses postgres as a hard dependency.
